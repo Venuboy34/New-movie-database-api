@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 import json
 
 app = Flask(__name__)
-
 TMDB_API_KEY = "3a08a646f83edac9a48438ac670a78b2"
 
 def pretty_json(data):
@@ -29,7 +28,6 @@ def search():
         "duckduckgo": search_duckduckgo(query)
     })
 
-# Fetch movie details from TMDB
 def fetch_tmdb(query):
     try:
         url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={query}"
@@ -47,7 +45,6 @@ def fetch_tmdb(query):
     except Exception as e:
         return {"error": str(e)}
 
-# Scrape Sflix for movie data
 def search_sflix(query):
     try:
         url = f"https://sflix.to/search/{query.replace(' ', '%20')}"
@@ -69,10 +66,9 @@ def search_sflix(query):
     except Exception as e:
         return {"error": str(e)}
 
-# Scrape HDHub4u for movie data
 def search_hdhub4u(query):
     try:
-        url = f"https://hdhub4u.cricket/search/{query.replace(' ', '%20')}"
+        url = f"https://hdhub4u.cricket/?s={query.replace(' ', '+')}"
         headers = {"User-Agent": "Mozilla/5.0"}
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
@@ -84,14 +80,13 @@ def search_hdhub4u(query):
                 continue
             data.append({
                 "title": title_tag.text.strip(),
-                "link": "https://hdhub4u.cricket" + title_tag["href"],
+                "link": title_tag["href"],
                 "poster": img_tag.get("data-src") or img_tag.get("src")
             })
         return data
     except Exception as e:
         return {"error": str(e)}
 
-# Scrape KuttyMovies for Tamil movie data
 def search_kuttymovies(query):
     try:
         url = f"https://1kuttymovies.cc/search/{query.replace(' ', '%20')}"
@@ -113,7 +108,6 @@ def search_kuttymovies(query):
     except Exception as e:
         return {"error": str(e)}
 
-# Scrape DuckDuckGo for additional search results
 def search_duckduckgo(query):
     try:
         url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}"
@@ -130,5 +124,5 @@ def search_duckduckgo(query):
     except Exception as e:
         return {"error": str(e)}
 
-if __name__ == "__main__":
-    app.run(debug=True)
+# Required by Vercel
+app = app
