@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import httpx
 from duckduckgo_search import DDGS
 from tmdbv3api import TMDb, Movie
+import os
 import asyncio
 
 app = FastAPI()
@@ -14,11 +15,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# TMDB setup
+# TMDB setup - Use environment variable if available
 tmdb = TMDb()
-tmdb.api_key = "3a08a646f83edac9a48438ac670a78b2"
+tmdb.api_key = os.environ.get("TMDB_API_KEY", "3a08a646f83edac9a48438ac670a78b2")
 tmdb.language = "en"
 movie_api = Movie()
+
+# Configure httpx client with shorter timeouts
+client = httpx.AsyncClient(timeout=10.0)
 
 @app.get("/")
 def root():
@@ -27,8 +31,7 @@ def root():
 async def get_flimxy_download_links(url):
     """Extract download links from a Flimxy movie page"""
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=15)
+        r = await client.get(url)
         soup = BeautifulSoup(r.text, "html.parser")
         download_links = []
         
@@ -38,7 +41,7 @@ async def get_flimxy_download_links(url):
         for element in download_elements:
             if element.get('href') and not element['href'].startswith('#'):
                 download_links.append({
-                    "quality": element.text.strip(),
+                    "quality": element.text.strip() or "Unknown Quality",
                     "link": element['href']
                 })
         
@@ -50,8 +53,7 @@ async def get_flimxy_download_links(url):
 async def get_hdhub4u_download_links(url):
     """Extract download links from a HDHub4u movie page"""
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=15)
+        r = await client.get(url)
         soup = BeautifulSoup(r.text, "html.parser")
         download_links = []
         
@@ -79,8 +81,7 @@ async def get_hdhub4u_download_links(url):
 async def get_kuttymovies_download_links(url):
     """Extract download links from a KuttyMovies movie page"""
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=15)
+        r = await client.get(url)
         soup = BeautifulSoup(r.text, "html.parser")
         download_links = []
         
@@ -107,9 +108,6 @@ async def search_movies(query: str = Query(...)):
     kuttymovies_results = []
     ddg_links = []
     
-    # Async tasks list
-    tasks = []
-    
     # 1. IMDB/TMDB Data
     try:
         results = movie_api.search(query)
@@ -128,24 +126,20 @@ async def search_movies(query: str = Query(...)):
     # 2. Flimxy scraper
     try:
         url = f"https://flimxy.vip/?s={query.replace(' ', '+')}"
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=15)
+        r = await client.get(url)
         soup = BeautifulSoup(r.text, "html.parser")
         posts = soup.select("div.result-item")
         
-        for post in posts:
+        for index, post in enumerate(posts[:3]):  # Limit to first 3 results to avoid timeouts
             title = post.select_one("h3").text.strip()
             link = post.a["href"]
             img = post.img["src"] if post.img else ""
-            
-            # Add task to get download links
-            tasks.append(asyncio.create_task(get_flimxy_download_links(link)))
             
             flimxy_results.append({
                 "title": title,
                 "link": link,
                 "poster": img,
-                "download_links_index": len(tasks) - 1  # Store the index to match with results later
+                "download_links": []  # Initialize empty, will be filled later
             })
     except Exception as e:
         print(f"Flimxy error: {e}")
@@ -153,24 +147,20 @@ async def search_movies(query: str = Query(...)):
     # 3. HDHub4u scraper
     try:
         url = f"https://hdhub4u.cricket/?s={query.replace(' ', '+')}"
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=15)
+        r = await client.get(url)
         soup = BeautifulSoup(r.text, "html.parser")
         posts = soup.select("div.result-item")
         
-        for post in posts:
+        for index, post in enumerate(posts[:3]):  # Limit to first 3 results
             title = post.select_one("h3").text.strip()
             link = post.a["href"]
             img = post.img["src"] if post.img else ""
-            
-            # Add task to get download links
-            tasks.append(asyncio.create_task(get_hdhub4u_download_links(link)))
             
             hdhub4u_results.append({
                 "title": title,
                 "link": link,
                 "poster": img,
-                "download_links_index": len(tasks) - 1  # Store the index to match with results later
+                "download_links": []  # Initialize empty, will be filled later
             })
     except Exception as e:
         print(f"HDHub4u error: {e}")
@@ -178,24 +168,20 @@ async def search_movies(query: str = Query(...)):
     # 4. KuttyMovies scraper
     try:
         url = f"https://kuttymovies.cc/?s={query.replace(' ', '+')}"
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=15)
+        r = await client.get(url)
         soup = BeautifulSoup(r.text, "html.parser")
         posts = soup.select("div.result-item")
         
-        for post in posts:
+        for index, post in enumerate(posts[:3]):  # Limit to first 3 results
             title = post.select_one("h3").text.strip()
             link = post.a["href"]
             img = post.img["src"] if post.img else ""
-            
-            # Add task to get download links
-            tasks.append(asyncio.create_task(get_kuttymovies_download_links(link)))
             
             kuttymovies_results.append({
                 "title": title,
                 "link": link,
                 "poster": img,
-                "download_links_index": len(tasks) - 1  # Store the index to match with results later
+                "download_links": []  # Initialize empty, will be filled later
             })
     except Exception as e:
         print(f"KuttyMovies error: {e}")
@@ -203,43 +189,42 @@ async def search_movies(query: str = Query(...)):
     # 5. DuckDuckGo fallback links
     try:
         with DDGS() as ddgs:
-            results = ddgs.text(query + " movie download", max_results=10)
+            results = ddgs.text(query + " movie download", max_results=5)  # Limit to 5 results
             for r in results:
                 ddg_links.append({"link": r.get("href")})
     except Exception as e:
         print(f"DuckDuckGo error: {e}")
     
-    # Wait for all tasks to complete
-    if tasks:
-        download_links_results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Fetch download links for the first result of each site (to avoid timeouts)
+    download_tasks = []
+    
+    if flimxy_results:
+        download_tasks.append(get_flimxy_download_links(flimxy_results[0]["link"]))
+    if hdhub4u_results:
+        download_tasks.append(get_hdhub4u_download_links(hdhub4u_results[0]["link"]))
+    if kuttymovies_results:
+        download_tasks.append(get_kuttymovies_download_links(kuttymovies_results[0]["link"]))
+    
+    if download_tasks:
+        download_results = await asyncio.gather(*download_tasks, return_exceptions=True)
         
         # Update results with download links
-        for i, result in enumerate(flimxy_results):
-            if "download_links_index" in result:
-                index = result["download_links_index"]
-                if index < len(download_links_results) and not isinstance(download_links_results[index], Exception):
-                    result["download_links"] = download_links_results[index]
-                else:
-                    result["download_links"] = []
-                del result["download_links_index"]
-        
-        for i, result in enumerate(hdhub4u_results):
-            if "download_links_index" in result:
-                index = result["download_links_index"]
-                if index < len(download_links_results) and not isinstance(download_links_results[index], Exception):
-                    result["download_links"] = download_links_results[index]
-                else:
-                    result["download_links"] = []
-                del result["download_links_index"]
-        
-        for i, result in enumerate(kuttymovies_results):
-            if "download_links_index" in result:
-                index = result["download_links_index"]
-                if index < len(download_links_results) and not isinstance(download_links_results[index], Exception):
-                    result["download_links"] = download_links_results[index]
-                else:
-                    result["download_links"] = []
-                del result["download_links_index"]
+        result_index = 0
+        if flimxy_results:
+            if isinstance(download_results[result_index], list):
+                flimxy_results[0]["download_links"] = download_results[result_index]
+            result_index += 1
+            
+        if hdhub4u_results:
+            if isinstance(download_results[result_index], list):
+                hdhub4u_results[0]["download_links"] = download_results[result_index]
+            result_index += 1
+            
+        if kuttymovies_results:
+            if isinstance(download_results[result_index], list):
+                kuttymovies_results[0]["download_links"] = download_results[result_index]
+    
+    await client.aclose()  # Close the httpx client
     
     return {
         "imdb": imdb_data,
