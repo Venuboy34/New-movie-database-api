@@ -4,8 +4,6 @@ httpx==0.26.0
 beautifulsoup4==4.12.2
 duckduckgo-search==3.9.5
 tmdbv3api==1.9.0
-asyncio==3.4.3
 pydantic==2.5.3
 python-multipart==0.0.6
-starlette==0.32.0
 lxml==4.9.3
